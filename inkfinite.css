@@ -1,0 +1,370 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: #000;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+#canvas {
+  position: fixed; inset: 0;
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+/* ── Panel base ──────────────────────────────────────────────────────────── */
+.panel {
+  position: fixed;
+  z-index: 1000;
+  background: rgba(20, 20, 20, 0.92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 5px;
+  display: flex;
+  gap: 2px;
+  user-select: none;
+  touch-action: none;
+  cursor: default;
+}
+.panel:active { cursor: default; }
+
+/* ── Drag handle ─────────────────────────────────────────────────────────────── */
+.drag-handle {
+  width: 20px; height: 20px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; cursor: grab;
+  color: rgba(255,255,255,0.25);
+  transition: color 0.15s, background 0.15s;
+  touch-action: none;
+}
+.drag-handle:hover { color: rgba(255,255,255,0.65); background: rgba(255,255,255,0.07); }
+.drag-handle:active { cursor: grabbing; }
+
+/* ── Edge snapping — only flex-direction; all position set via JS ────────── */
+.panel.edge-left,  .panel.edge-right  { flex-direction: column; }
+.panel.edge-top,   .panel.edge-bottom { flex-direction: row; }
+
+/* ── Toolbar sections ────────────────────────────────────────────────────── */
+.tb-section {
+  display: flex;
+  flex-direction: inherit; /* matches parent panel direction */
+  gap: 2px;
+}
+
+/* Dividers between sections */
+.panel.edge-left  .tb-section + .tb-section,
+.panel.edge-right .tb-section + .tb-section {
+  border-top: 1px solid rgba(255,255,255,0.1);
+  padding-top: 4px;
+  margin-top: 2px;
+}
+.panel.edge-top   .tb-section + .tb-section,
+.panel.edge-bottom .tb-section + .tb-section {
+  border-left: 1px solid rgba(255,255,255,0.1);
+  padding-left: 4px;
+  margin-left: 2px;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.tb-btn {
+  width: 30px; height: 30px;
+  border: none; border-radius: 8px;
+  background: transparent; color: #ccc;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0; padding: 5px;
+  transition: background 0.1s, color 0.1s;
+  position: relative;
+}
+.tb-btn svg { width: 100%; height: 100%; }
+.tb-btn:hover  { background: #333; color: #fff; }
+.tb-btn.active-tool { background: #444; color: #fff; }
+.tb-btn.active-grid { background: #444; color: #fff; }
+
+.tb-sm { width: 26px; height: 26px; font-size: 11px; padding: 3px; }
+
+/* ── Palette panel ───────────────────────────────────────────────────────── */
+#palette-panel { padding: 5px; gap: 4px; align-items: center; }
+
+#palette-slots { display: flex; gap: 4px; }
+
+/* Match palette slots direction to panel orientation */
+.panel.edge-left  #palette-slots,
+.panel.edge-right #palette-slots  { flex-direction: column; }
+.panel.edge-top   #palette-slots,
+.panel.edge-bottom #palette-slots { flex-direction: row; }
+/* Default (before any edge class set) */
+#palette-panel:not(.edge-top):not(.edge-bottom) #palette-slots { flex-direction: column; }
+
+.color-slot {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.12);
+  cursor: pointer; flex-shrink: 0;
+  transition: transform 0.1s, border-color 0.1s;
+}
+.color-slot:hover { transform: scale(1.12); }
+.color-slot.active-color {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.3);
+}
+
+/* ── Tab panel ───────────────────────────────────────────────────────────── */
+#tab-panel {
+  flex-direction: row;   /* always horizontal */
+  align-items: center;
+  gap: 1px;
+  padding: 4px 6px;
+}
+/* On left/right edges: stack vertically */
+#tab-panel.edge-left, #tab-panel.edge-right {
+  flex-direction: column;
+}
+
+#tab-label {
+  font-size: 10px; color: #888;
+  text-align: center; padding: 0 3px;
+  min-width: 22px; line-height: 26px;
+  cursor: default;
+}
+
+/* ── Shapes sub-panel ────────────────────────────────────────────────────── */
+#shapes-panel {
+  position: fixed; z-index: 1500;
+  background: rgba(20,20,20,0.95);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px; padding: 8px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.sp-group { display: flex; flex-direction: row; gap: 2px; }
+.sp-btn.active-shape { background: #444; color: #fff; }
+
+/* ── Point eraser size popup ─────────────────────────────────────────────── */
+#point-eraser-popup {
+  position: fixed; z-index: 2000;
+  bottom: 70px; left: 50%; transform: translateX(-50%);
+  background: rgba(20,20,20,0.96);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 14px; padding: 5px 10px;
+  display: flex; align-items: center; gap: 6px;
+  user-select: none;
+}
+#point-eraser-popup .tb-btn { width: 26px; height: 26px; font-size: 14px; }
+#pe-popup-info { display: flex; flex-direction: column; align-items: center; min-width: 28px; }
+#pe-size-label { font-size: 15px; font-weight: 600; color: #fff; line-height: 1; }
+#pe-popup-sublabel { font-size: 10px; color: #888; margin-top: 1px; }
+
+/* ── Eraser sub-panel ────────────────────────────────────────────────────── */
+#eraser-panel {
+  position: fixed; z-index: 1500;
+  background: rgba(20,20,20,0.95);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px; padding: 8px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.ep-btn.active-eraser { background: #444; color: #fff; }
+.sp-divider { height: 1px; background: rgba(255,255,255,0.1); margin: 2px 0; }
+.sp-sides-row { display: flex; align-items: center; justify-content: center; gap: 3px; }
+#rp-sides-label { font-size: 11px; color: #aaa; min-width: 18px; text-align: center; line-height: 1; }
+#btn-straight.straight-on { background: #444; color: #fff; }
+
+/* ── Width dot ───────────────────────────────────────────────────────────── */
+#width-dot { display: block; }
+
+/* ── Width popover ───────────────────────────────────────────────────────── */
+#width-popover {
+  position: fixed; z-index: 1500;
+  background: rgba(20,20,20,0.95);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px;
+  padding: 7px 9px;
+  display: flex; align-items: center; gap: 6px;
+}
+.width-slider-wrap { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+#width-slider {
+  -webkit-appearance: none;
+  width: 110px; height: 4px; border-radius: 2px;
+  background: #555; outline: none; cursor: pointer;
+}
+#width-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; cursor: pointer;
+}
+#width-label { font-size: 10px; color: #aaa; min-width: 16px; text-align: center; }
+
+/* ── Custom colour picker ──────────────────────────────────────────────────── */
+#custom-color-picker {
+  position: fixed; z-index: 3000;
+  background: rgba(20,20,20,0.97);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 14px; padding: 10px;
+}
+#ccp-swatches {
+  display: grid;
+  grid-template-columns: repeat(6, 26px);
+  gap: 5px;
+}
+.ccp-swatch {
+  width: 26px; height: 26px; border-radius: 6px;
+  cursor: pointer; border: 2px solid rgba(255,255,255,0.1);
+  transition: transform 0.12s, border-color 0.12s;
+}
+.ccp-swatch:hover { transform: scale(1.18); border-color: rgba(255,255,255,0.7); }
+.ccp-rainbow {
+  background: linear-gradient(135deg, #ff0000, #ff8800, #ffff00, #00ff00, #00ffff, #0088ff, #aa00ff, #ff00aa);
+}
+
+/* ── Shade picker ────────────────────────────────────────────────────────── */
+#shade-picker {
+  position: fixed; z-index: 2000;
+  background: rgba(20,20,20,0.95);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px; padding: 8px;
+}
+#shade-swatches { display: flex; gap: 5px; }
+.shade-swatch {
+  width: 26px; height: 26px; border-radius: 50%;
+  cursor: pointer; border: 2px solid rgba(255,255,255,0.1);
+  transition: transform 0.1s, border-color 0.1s;
+}
+.shade-swatch:hover { transform: scale(1.15); border-color: #fff; }
+
+/* ── Paste FAB ───────────────────────────────────────────────────────────────── */
+#paste-fab {
+  position: fixed; z-index: 2500;
+  top: 12px; right: 12px;
+  background: rgba(20,20,20,0.92);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 20px; padding: 6px 12px;
+  display: flex; align-items: center; gap: 6px;
+  color: #ccc; cursor: pointer;
+  font-size: 12px; user-select: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+#paste-fab svg { width: 16px; height: 16px; flex-shrink: 0; }
+#paste-fab:hover { background: rgba(50,50,50,0.97); color: #fff; border-color: rgba(255,255,255,0.25); }
+#paste-fab.paste-mode-active {
+  background: rgba(180,60,60,0.92); border-color: rgba(255,100,100,0.4); color: #fff;
+}
+
+/* ── Regular polygon sides popup ─────────────────────────────────────────────── */
+#rp-popup {
+  position: fixed; z-index: 2000;
+  bottom: 70px; left: 50%; transform: translateX(-50%);
+  background: rgba(20,20,20,0.96);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 20px; padding: 10px 18px;
+  display: flex; align-items: center; gap: 16px;
+  user-select: none;
+}
+#rp-popup .tb-btn { width: 44px; height: 44px; font-size: 22px; }
+#rp-popup-info { display: flex; flex-direction: column; align-items: center; min-width: 40px; }
+#rp-sides-label { font-size: 32px; font-weight: 600; color: #fff; line-height: 1; }
+#rp-popup-sublabel { font-size: 11px; color: #888; margin-top: 2px; }
+
+/* ── Selection mini-bar ──────────────────────────────────────────────────────── */
+#sel-minibar {
+  position: fixed; z-index: 2500;
+  background: rgba(20,20,20,0.95);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 10px; padding: 4px;
+  display: flex; gap: 2px;
+  pointer-events: auto;
+}
+
+/* ── Text tool button ────────────────────────────────────────────────────────── */
+#btn-text {
+  font-family: Georgia, 'Palatino Linotype', Palatino, serif;
+  font-size: 19px;
+  font-weight: bold;
+  font-style: italic;
+  line-height: 1;
+}
+
+/* ── Text overlay ────────────────────────────────────────────────────────────── */
+#text-overlay {
+  position: fixed; z-index: 3000;
+  pointer-events: none;
+}
+#text-input {
+  pointer-events: auto;
+  background: transparent;
+  border: none;
+  border-bottom: 1.5px solid currentColor;
+  outline: none;
+  resize: none;
+  font-family: system-ui, -apple-system, sans-serif;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  min-width: 40px;
+  width: 120px;
+  line-height: 1.25;
+  color: inherit;
+  caret-color: currentColor;
+  display: block;
+  white-space: pre;
+}
+
+/* ── Zoom label ─────────────────────────────────────────────────────────────── */
+#zoom-label {
+  font-size: 11px; color: #aaa;
+  min-width: 34px; text-align: center;
+  line-height: 26px; cursor: default;
+  user-select: none;
+}
+
+/* ── Minimap popup ───────────────────────────────────────────────────────────── */
+#minimap-popup {
+  position: fixed; z-index: 3500;
+  background: rgba(20,20,20,0.96);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px; padding: 8px;
+  display: flex; flex-direction: column; gap: 6px;
+  user-select: none;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+
+#minimap-viewport-wrap {
+  position: relative;
+  border-radius: 6px; overflow: hidden;
+  cursor: crosshair;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+#minimap-canvas { display: block; }
+
+#minimap-viewport-rect {
+  position: absolute;
+  border: 1.5px solid rgba(255,255,255,0.75);
+  background: rgba(255,255,255,0.07);
+  pointer-events: none;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+}
+
+#minimap-nav {
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+}
+
+#mm-tab-label {
+  font-size: 11px; color: #888;
+  min-width: 28px; text-align: center;
+}
+
+#minimap-nav .tb-btn { width: 24px; height: 24px; font-size: 10px; }

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Inkfinite</title>
+  <link rel="stylesheet" href="inkfinite.css?v=2">
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <!-- Tool panel (default: right edge) -->
+  <div id="toolbar" class="panel edge-right" data-edge="right" data-zone="center">
+    <div class="drag-handle" title="Sposta pannello"><svg viewBox="0 0 8 12" width="10" height="14" fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="6" r="1.2"/><circle cx="6" cy="6" r="1.2"/><circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/></svg></div>
+    <div class="tb-section">
+      <button class="tb-btn tool-btn" id="btn-touch" title="Scorri lavagna">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><polyline points="5 9 2 12 5 15"/><polyline points="9 5 12 2 15 5"/><polyline points="19 9 22 12 19 15"/><polyline points="9 19 12 22 15 19"/></svg>
+      </button>
+    </div>
+    <div class="tb-section">
+      <button class="tb-btn tool-btn" id="btn-laser" title="Laser">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+      </button>
+      <button class="tb-btn tool-btn" id="btn-highlighter" title="Highlighter">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+      </button>
+      <button class="tb-btn tool-btn active-tool" id="btn-pencil" title="Pencil">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+      </button>
+      <button class="tb-btn" id="btn-eraser-toggle" title="Gomme">
+        <svg viewBox="5 5 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"><g transform="rotate(-45,12,12)"><path d="M7 9 L17 9 A3 3 0 0 1 17 15 L7 15 Z"/><line x1="17" y1="9" x2="17" y2="15"/></g></svg>
+      </button>
+      <button class="tb-btn tool-btn" id="btn-text" title="Testo">T</button>
+    </div>
+    <div class="tb-section">
+      <button class="tb-btn" id="btn-shapes-toggle" title="Shapes">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="0.5"/><circle cx="17" cy="6.5" r="3.5"/><polygon points="3,21 7.5,14 12,21"/><line x1="15" y1="14" x2="21" y2="14"/><line x1="18" y1="11" x2="18" y2="21"/></svg>
+      </button>
+    </div>
+    <div class="tb-section">
+      <button class="tb-btn tool-btn" id="btn-select" title="Selezione">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="12" height="10" rx="1" stroke-dasharray="3 2"/><path d="M15 13L15 22L18 19.5L20 23.5L21.5 22L19.5 18.5L23 18.5Z" fill="currentColor" stroke="none"/></svg>
+      </button>
+    </div>
+    <div class="tb-section">
+      <button class="tb-btn" id="btn-undo" title="Undo (Ctrl+Z)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+      </button>
+      <button class="tb-btn" id="btn-redo" title="Redo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- History panel (top-left) -->
+  <div id="history-panel" class="panel edge-top" data-edge="top" data-zone="start">
+    <div class="drag-handle" title="Sposta pannello"><svg viewBox="0 0 8 12" width="10" height="14" fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="6" r="1.2"/><circle cx="6" cy="6" r="1.2"/><circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/></svg></div>
+    <button class="tb-btn" id="btn-undo2" title="Undo (Ctrl+Z)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+    </button>
+    <button class="tb-btn" id="btn-redo2" title="Redo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+    </button>
+  </div>
+
+  <!-- Canvas options panel (bottom-left) -->
+  <div id="canvas-panel" class="panel edge-bottom" data-edge="bottom" data-zone="start">
+    <div class="drag-handle" title="Sposta pannello"><svg viewBox="0 0 8 12" width="10" height="14" fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="6" r="1.2"/><circle cx="6" cy="6" r="1.2"/><circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/></svg></div>
+    <button class="tb-btn" id="btn-bg" title="Colore sfondo">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="bg-rainbow" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#ff0000"/><stop offset="20%" stop-color="#ffaa00"/><stop offset="40%" stop-color="#ffff00"/><stop offset="60%" stop-color="#00cc44"/><stop offset="80%" stop-color="#0088ff"/><stop offset="100%" stop-color="#aa00ff"/></linearGradient></defs>
+        <rect x="3" y="3" width="18" height="18" rx="3" fill="url(#bg-rainbow)" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>
+      </svg>
+    </button>
+    <button class="tb-btn" id="btn-grid" title="Griglia">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    </button>
+    <button class="tb-btn tb-sm" id="btn-zoom-out" title="Zoom out">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <span id="zoom-label">100%</span>
+    <button class="tb-btn tb-sm" id="btn-zoom-in" title="Zoom in">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <button class="tb-btn tb-sm" id="btn-zoom-reset" title="Zoom 100%">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="11" y1="8" x2="11" y2="14"/></svg>
+    </button>
+  </div>
+
+  <!-- Palette panel (default: right edge, attached next to toolbar) -->
+  <div id="palette-panel" class="panel edge-right" data-edge="right" data-zone="center">
+    <div class="drag-handle" title="Sposta pannello"><svg viewBox="0 0 8 12" width="10" height="14" fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="6" r="1.2"/><circle cx="6" cy="6" r="1.2"/><circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/></svg></div>
+    <button class="tb-btn" id="btn-width" title="Spessore tratto">
+      <canvas id="width-dot" width="20" height="20"></canvas>
+    </button>
+    <div id="palette-slots"></div>
+    <button class="tb-btn" id="btn-add-color" title="Add color">+</button>
+  </div>
+
+  <!-- Custom colour picker popover -->
+  <div id="custom-color-picker" style="display:none">
+    <div id="ccp-swatches"></div>
+    <input type="color" id="ccp-native" style="display:none">
+  </div>
+
+  <!-- Tab mini-panel (default: bottom-right) -->
+  <div id="tab-panel" class="panel edge-bottom" data-edge="bottom" data-zone="end">
+    <div class="drag-handle" title="Sposta pannello"><svg viewBox="0 0 8 12" width="10" height="14" fill="currentColor"><circle cx="2" cy="2" r="1.2"/><circle cx="6" cy="2" r="1.2"/><circle cx="2" cy="6" r="1.2"/><circle cx="6" cy="6" r="1.2"/><circle cx="2" cy="10" r="1.2"/><circle cx="6" cy="10" r="1.2"/></svg></div>
+    <button class="tb-btn tb-sm" id="btn-tab-prev">◀</button>
+    <span id="tab-label">1/1</span>
+    <button class="tb-btn tb-sm" id="btn-tab-next">▶</button>
+    <button class="tb-btn tb-sm" id="btn-tab-add">＋</button>
+    <button class="tb-btn tb-sm" id="btn-minimap" title="Vista pagina">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="2" width="20" height="20" rx="3"/>
+        <rect x="10" y="8" width="8" height="6" rx="1.2"/>
+        <line x1="2" y1="14" x2="10" y2="14" stroke-width="1.2" opacity="0.6"/>
+        <line x1="2" y1="8" x2="10" y2="8" stroke-width="1.2" opacity="0.6"/>
+      </svg>
+    </button>
+  </div>
+
+  <!-- Minimap popup -->
+  <div id="minimap-popup" style="display:none">
+    <div id="minimap-viewport-wrap">
+      <canvas id="minimap-canvas" width="240" height="160"></canvas>
+      <div id="minimap-viewport-rect"></div>
+    </div>
+    <div id="minimap-nav">
+      <button class="tb-btn tb-sm" id="btn-mm-prev" title="Pagina precedente">◀</button>
+      <span id="mm-tab-label">1/1</span>
+      <button class="tb-btn tb-sm" id="btn-mm-next" title="Pagina successiva">▶</button>
+    </div>
+  </div>
+
+  <!-- Point eraser size popup -->
+  <div id="point-eraser-popup" style="display:none">
+    <button class="tb-btn" id="btn-pe-minus" title="Riduci gomma">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div id="pe-popup-info">
+      <span id="pe-size-label">20</span>
+      <span id="pe-popup-sublabel">px</span>
+    </div>
+    <button class="tb-btn" id="btn-pe-plus" title="Ingrandisci gomma">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+  </div>
+
+  <!-- Eraser sub-panel -->
+  <div id="eraser-panel" style="display:none">
+    <div class="sp-group">
+      <button class="tb-btn ep-btn" data-eraser="pointEraser" title="Gomma puntuale">
+        <svg viewBox="5 5 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"><g transform="rotate(-45,12,12)"><path d="M7 9 L17 9 A3 3 0 0 1 17 15 L7 15 Z"/><line x1="17" y1="9" x2="17" y2="15"/></g></svg>
+      </button>
+      <button class="tb-btn ep-btn" data-eraser="lassoEraser" title="Gomma a lazo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8 C2 10 2 14 4 16 L8 20 C10 22 14 22 16 20 L20 16 C22 14 22 10 20 8 L16 4 C14 2 10 2 8 4 Z" stroke-dasharray="3 2"/><line x1="9" y1="9" x2="15" y2="15"/><line x1="15" y1="9" x2="9" y2="15"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Shapes sub-panel -->
+  <div id="shapes-panel" style="display:none">
+    <div class="sp-group">
+      <button class="tb-btn sp-btn" data-shape="line" title="Line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="20" x2="20" y2="4"/></svg></button>
+      <button class="tb-btn sp-btn" data-shape="dashedLine" title="Dashed line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3"><line x1="4" y1="20" x2="20" y2="4"/></svg></button>
+      <button class="tb-btn sp-btn" data-shape="arrow" title="Arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="19" x2="19" y2="5"/><polyline points="9 5 19 5 19 15"/></svg></button>
+    </div>
+    <div class="sp-group">
+      <button class="tb-btn sp-btn" data-shape="rect" title="Rectangle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="1"/></svg></button>
+      <button class="tb-btn sp-btn" data-shape="square" title="Square"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="1"/></svg></button>
+      <button class="tb-btn sp-btn" data-shape="roundedRect" title="Rounded rectangle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="6" width="18" height="12" rx="5"/></svg></button>
+    </div>
+    <div class="sp-group">
+      <button class="tb-btn sp-btn" data-shape="circle" title="Circle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg></button>
+      <button class="tb-btn sp-btn" data-shape="ellipse" title="Ellipse"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="10" ry="6"/></svg></button>
+      <button class="tb-btn sp-btn" data-shape="goniometric" title="Circonferenza goniometrica"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="12" y1="4" x2="12" y2="20"/><line x1="16.3" y1="7.7" x2="17.7" y2="6.3"/><line x1="7.7" y1="7.7" x2="6.3" y2="6.3"/><line x1="16.3" y1="16.3" x2="17.7" y2="17.7"/><line x1="7.7" y1="16.3" x2="6.3" y2="17.7"/><line x1="18.9" y1="8" x2="19.9" y2="6.3"/><line x1="5.1" y1="8" x2="4.1" y2="6.3"/></svg></button>
+    </div>
+    <div class="sp-group">
+      <button class="tb-btn sp-btn" data-shape="rightTriangle" title="Right triangle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="3,3 3,21 21,21"/></svg></button>
+      <button class="tb-btn sp-btn" data-shape="polygon" title="Poligonale / Poligono"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="3,20 9,4 22,17"/></svg></button>
+      <button class="tb-btn sp-btn" id="btn-regularPolygon" data-shape="regularPolygon" title="Poligono regolare"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="12,2.5 21.5,9.1 18,20.5 6,20.5 2.5,9.1"/></svg></button>
+    </div>
+    <div class="sp-group">
+      <button class="tb-btn sp-btn" data-shape="cartesian" title="Piano cartesiano completo (4 quadranti)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="19" y2="12"/><polyline points="17,10 20,12 17,14"/><line x1="12" y1="20" x2="12" y2="5"/><polyline points="10,7 12,4 14,7"/></svg></button>
+      <button class="tb-btn sp-btn" data-shape="cartesianQ1" title="Semi-assi positivi (Q1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="19" y2="20"/><polyline points="17,18 20,20 17,22"/><line x1="4" y1="20" x2="4" y2="5"/><polyline points="2,7 4,4 6,7"/></svg></button>
+      <button class="tb-btn sp-btn" data-shape="cartesianQ12" title="Semipiano superiore (Q1+Q2)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="19" x2="19" y2="19"/><polyline points="17,17 20,19 17,21"/><line x1="12" y1="19" x2="12" y2="4"/><polyline points="10,7 12,4 14,7"/></svg></button>
+    </div>
+    <div class="sp-divider"></div>
+    <div class="sp-group">
+      <button class="tb-btn" id="btn-straight" title="Straighten (snap angles)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="21" x2="21" y2="3"/><line x1="3" y1="3" x2="21" y2="3"/><line x1="21" y1="3" x2="21" y2="21"/></svg></button>
+      <span id="sp-active-label" style="font-size:10px;color:#888;padding:0 4px;line-height:30px;"></span>
+    </div>
+  </div>
+
+  <!-- Width popover -->
+  <div id="width-popover" style="display:none">
+    <button class="tb-btn" id="btn-width-minus">−</button>
+    <div class="width-slider-wrap">
+      <input type="range" id="width-slider" min="0" max="8" step="1" value="2">
+      <span id="width-label">3</span>
+    </div>
+    <button class="tb-btn" id="btn-width-plus">+</button>
+  </div>
+
+  <!-- Shade picker -->
+  <div id="shade-picker" style="display:none">
+    <div id="shade-swatches"></div>
+  </div>
+
+<!-- Paste FAB — visible only when clipboard has content -->
+  <div id="paste-fab" style="display:none" title="Incolla — tocca la lavagna per posizionare">
+    <svg id="paste-fab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
+    <span id="paste-fab-label">Incolla</span>
+  </div>
+
+  <!-- Selection mini-bar -->
+  <div id="sel-minibar" style="display:none">
+    <button class="tb-btn" id="btn-sel-delete" title="Elimina (Canc)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="m19 6-.867 12.142A2 2 0 0 1 16.138 20H7.862a2 2 0 0 1-1.995-1.858L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+    </button>
+    <button class="tb-btn" id="btn-sel-copy" title="Copia (Ctrl+C)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+    </button>
+    <button class="tb-btn tb-sm" id="btn-sel-shrink" title="Rimpicciolisci">−</button>
+    <button class="tb-btn tb-sm" id="btn-sel-grow" title="Ingrandisci">+</button>
+  </div>
+
+  <!-- Regular polygon sides popup -->
+  <div id="rp-popup" style="display:none">
+    <button class="tb-btn" id="btn-rp-minus" title="Meno lati">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <div id="rp-popup-info">
+      <span id="rp-sides-label">3</span>
+      <span id="rp-popup-sublabel">lati</span>
+    </div>
+    <button class="tb-btn" id="btn-rp-plus" title="Più lati">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+  </div>
+
+  <!-- Text editing overlay -->
+  <div id="text-overlay" style="display:none">
+    <textarea id="text-input" rows="1" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+  </div>
+
+  <script src="inkfinite.js?v=2"></script>
+</body>
+</html>
