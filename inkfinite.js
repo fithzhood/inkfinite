@@ -168,15 +168,19 @@ function hslToHex(h,s,l) {
 // ─── Rendering ───────────────────────────────────────────────────────────────
 function drawGrid(t) {
   const {scale,tx,ty} = t.transform;
-  ctx.strokeStyle = luminance(t.bgColor)>0.5?'rgba(0,0,0,0.15)':'rgba(255,255,255,0.3)';
-  ctx.lineWidth = 1/scale;
-  const left=-tx/scale, top=-ty/scale;
-  const right=(canvas.width-tx)/scale, bottom=(canvas.height-ty)/scale;
-  const sx=Math.floor(left/GRID_SIZE)*GRID_SIZE, sy=Math.floor(top/GRID_SIZE)*GRID_SIZE;
+  // Drawn in screen space on pixel centres: a 1px line on a pixel boundary is
+  // smeared over two pixels at half strength, which made the grid hard to see.
+  ctx.save();
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.strokeStyle = luminance(t.bgColor)>0.5?'rgba(0,0,0,0.09)':'rgba(255,255,255,0.3)';
+  ctx.lineWidth = 1;
+  const step=GRID_SIZE*scale, W=canvas.width, H=canvas.height;
+  const x0=((tx%step)+step)%step, y0=((ty%step)+step)%step;
   ctx.beginPath();
-  for(let x=sx;x<=right;x+=GRID_SIZE){ctx.moveTo(x,top);ctx.lineTo(x,bottom);}
-  for(let y=sy;y<=bottom;y+=GRID_SIZE){ctx.moveTo(left,y);ctx.lineTo(right,y);}
+  for(let i=0;x0+i*step<=W;i++){const x=Math.round(x0+i*step)+0.5;ctx.moveTo(x,0);ctx.lineTo(x,H);}
+  for(let i=0;y0+i*step<=H;i++){const y=Math.round(y0+i*step)+0.5;ctx.moveTo(0,y);ctx.lineTo(W,y);}
   ctx.stroke();
+  ctx.restore();
 }
 
 // Chaikin subdivision — smooths a polyline by replacing each segment with
