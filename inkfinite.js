@@ -168,7 +168,7 @@ function hslToHex(h,s,l) {
 // ─── Rendering ───────────────────────────────────────────────────────────────
 function drawGrid(t) {
   const {scale,tx,ty} = t.transform;
-  ctx.strokeStyle = luminance(t.bgColor)>0.5?'rgba(0,0,0,0.15)':'rgba(255,255,255,0.15)';
+  ctx.strokeStyle = luminance(t.bgColor)>0.5?'rgba(0,0,0,0.15)':'rgba(255,255,255,0.3)';
   ctx.lineWidth = 1/scale;
   const left=-tx/scale, top=-ty/scale;
   const right=(canvas.width-tx)/scale, bottom=(canvas.height-ty)/scale;
