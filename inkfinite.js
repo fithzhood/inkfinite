@@ -20,6 +20,7 @@ const EDGE_ZONE      = 60;   // px from edge to start auto-scroll
 const EDGE_MAX_SPEED = 14;   // max scroll pixels/frame
 const TAP_HIT_R      = 14;   // touch hit radius (screen px)
 let   shapeIdSeq  = 0;
+let   docVer      = 0;   // bumped by every edit that goes through undo; the autosave watches it
 
 const DARK_PALETTE  = ['#FFFFFF','#FF4444','#55BBFF','#88FF88','#FFEE44','#FF44FF'];
 const LIGHT_PALETTE = ['#111111','#CC0000','#0055AA','#228822','#AA8800','#990099'];
@@ -1716,9 +1717,9 @@ function detachSelection(){
     shapes:swap(t.shapes,sel.items.shapes,deepCloneShape),
   };
 }
-function pushUndo(){tab().undoStack.push(snap());tab().redoStack=[];syncUndoUI();}
-function undo(){const t=tab();if(!t.undoStack.length)return;t.redoStack.push(snap());const s=t.undoStack.pop();t.strokes=s.strokes;t.highlighters=s.highlighters;t.shapes=s.shapes||[];state.dirty=true;syncUndoUI();}
-function redo(){const t=tab();if(!t.redoStack.length)return;t.undoStack.push(snap());const s=t.redoStack.pop();t.strokes=s.strokes;t.highlighters=s.highlighters;t.shapes=s.shapes||[];state.dirty=true;syncUndoUI();}
+function pushUndo(){docVer++;tab().undoStack.push(snap());tab().redoStack=[];syncUndoUI();}
+function undo(){const t=tab();if(!t.undoStack.length)return;docVer++;t.redoStack.push(snap());const s=t.undoStack.pop();t.strokes=s.strokes;t.highlighters=s.highlighters;t.shapes=s.shapes||[];state.dirty=true;syncUndoUI();}
+function redo(){const t=tab();if(!t.redoStack.length)return;docVer++;t.undoStack.push(snap());const s=t.redoStack.pop();t.strokes=s.strokes;t.highlighters=s.highlighters;t.shapes=s.shapes||[];state.dirty=true;syncUndoUI();}
 function syncUndoUI(){
   const canUndo=tab().undoStack.length?'1':'0.35';
   const canRedo=tab().redoStack.length?'1':'0.35';
@@ -2629,6 +2630,330 @@ document.getElementById('btn-zoom-reset').addEventListener('click', () => {
   applyZoom(1, canvas.width / 2, canvas.height / 2);
 });
 
+// ─── Save / open ─────────────────────────────────────────────────────────────
+// Two layers:
+//  · autosave: the whole board (all pages) goes to IndexedDB a moment after every
+//    change, and comes back on the next launch. Works in the APK too.
+//  · files: "Salva su file" writes a .inkfinite (JSON) you can move between devices,
+//    "Apri file" reads one back, "Esporta pagina come PNG" makes an image of the page.
+// Undo history is not saved: it would double the size and only covers the session.
+const FILE_EXT     = '.inkfinite';
+const DOC_VERSION  = 1;
+const IS_NATIVE    = document.body.classList.contains('capacitor');
+// Android WebView ignores <a download>: in the APK only the autosave and "Apri file" work.
+const CAN_DOWNLOAD = !IS_NATIVE;
+
+function serializeDoc() {
+  return {
+    app: 'inkfinite', version: DOC_VERSION, savedAt: Date.now(),
+    activeTabIndex: state.activeTabIndex,
+    activeColor: state.activeColor, highlighterColor: state.highlighterColor,
+    customColors: [...state.customColors],
+    tabs: state.tabs.map(t => ({
+      bgColor: t.bgColor, gridEnabled: t.gridEnabled,
+      transform: { ...t.transform },
+      toolWidths: { ...t.toolWidths }, toolWidthPx: { ...t.toolWidthPx },
+      seq: t.seq,
+      strokes: t.strokes.filter(s => s !== curStroke),
+      highlighters: t.highlighters.filter(s => s !== curStroke),
+      shapes: t.shapes,
+    })),
+  };
+}
+
+function isDoc(d) {
+  return d && d.app === 'inkfinite' && Array.isArray(d.tabs) && d.tabs.length > 0;
+}
+
+function boardIsEmpty() {
+  return state.tabs.every(t => !t.strokes.length && !t.highlighters.length && !t.shapes.length);
+}
+
+function applyDoc(d) {
+  if (textEdit.active) cancelText();
+  cancelStroke(); cancelPolyShape(); clearSelection();
+  if (mmOpen) closeMinimap();
+  const arr = v => Array.isArray(v) ? v : [];
+  let maxS = 0, maxTx = 0;
+  state.tabs = d.tabs.slice(0, MAX_TABS).map(src => {
+    const t = makeTab();
+    if (typeof src.bgColor === 'string') t.bgColor = src.bgColor;
+    t.gridEnabled  = !!src.gridEnabled;
+    t.strokes      = arr(src.strokes).filter(s => s && Array.isArray(s.points));
+    t.highlighters = arr(src.highlighters).filter(s => s && Array.isArray(s.points));
+    t.shapes       = arr(src.shapes).filter(s => s && s.type);
+    Object.assign(t.transform,   src.transform   || {});
+    Object.assign(t.toolWidths,  src.toolWidths  || {});
+    Object.assign(t.toolWidthPx, src.toolWidthPx || {});
+    let seq = src.seq || 0;
+    for (const it of [...t.strokes, ...t.highlighters, ...t.shapes]) if ((it.seq || 0) > seq) seq = it.seq;
+    t.seq = seq;
+    // New shapes must not reuse ids from the loaded ones
+    for (const sh of t.shapes) {
+      const m = /^(s|tx)(\d+)$/.exec(sh.id || '');
+      if (m) { const n = +m[2]; if (m[1] === 's') maxS = Math.max(maxS, n); else maxTx = Math.max(maxTx, n); }
+    }
+    return t;
+  });
+  shapeIdSeq = Math.max(shapeIdSeq, maxS);
+  shapeIdSeqText = Math.max(shapeIdSeqText, maxTx);
+  if (typeof d.activeColor === 'string') state.activeColor = d.activeColor;
+  if (typeof d.highlighterColor === 'string') state.highlighterColor = d.highlighterColor;
+  if (Array.isArray(d.customColors)) state.customColors = d.customColors.slice(-MAX_CUSTOM);
+  itemsChanged(null);
+  switchTab(Math.min(Math.max(d.activeTabIndex | 0, 0), state.tabs.length - 1));
+  selectTool(state.activeTool);
+  updateZoomLabel();
+  docVer++;
+}
+
+// ── Autosave (IndexedDB) ──
+const IDB_NAME = 'inkfinite', IDB_STORE = 'boards', IDB_KEY = 'current';
+let idbPromise = null;
+function idb() {
+  if (!idbPromise) idbPromise = new Promise((res, rej) => {
+    if (!window.indexedDB) { rej(new Error('no-idb')); return; }
+    const rq = indexedDB.open(IDB_NAME, 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore(IDB_STORE);
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error);
+  });
+  return idbPromise;
+}
+function idbGet() {
+  return idb().then(db => new Promise((res, rej) => {
+    const rq = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(IDB_KEY);
+    rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
+  }));
+}
+function idbPut(doc) {
+  return idb().then(db => new Promise((res, rej) => {
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put(doc, IDB_KEY); // the doc is cloned here, synchronously
+    tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
+  }));
+}
+
+const autosave = { ready: false, ok: true, savedSig: '', savedAt: 0, writing: false };
+
+// Cheap fingerprint of everything that is saved: compared every second, so it
+// must not walk the points.
+function docSignature() {
+  const p = [docVer, sceneVer, state.activeTabIndex, state.activeColor, state.highlighterColor, state.customColors.join()];
+  for (const t of state.tabs) {
+    const tr = t.transform;
+    p.push(t.bgColor, t.gridEnabled ? 1 : 0, tr.scale, Math.round(tr.tx), Math.round(tr.ty),
+           t.strokes.length, t.highlighters.length, t.shapes.length,
+           Object.values(t.toolWidthPx).join());
+  }
+  return p.join('|');
+}
+
+// A gesture in progress keeps changing the board after its pushUndo(): wait for it to end.
+function boardBusy() {
+  return ptrs.size > 0 || !!curStroke || ss.drawing || eraserActive || !!lassoEraserPts || textEdit.active ||
+         ['dragging', 'resizing', 'rotating', 'vertex', 'lasso'].includes(sel.phase);
+}
+
+function saveNow(force) {
+  if (!autosave.ready || !autosave.ok || autosave.writing) return;
+  if (!force && boardBusy()) return;
+  const sig = docSignature();
+  if (sig === autosave.savedSig) return;
+  autosave.writing = true;
+  let doc;
+  try { doc = serializeDoc(); } catch (e) { autosave.writing = false; return; }
+  idbPut(doc).then(() => {
+    autosave.savedSig = sig; autosave.savedAt = doc.savedAt;
+    if (navigator.storage && navigator.storage.persist && !autosave.persistAsked) {
+      autosave.persistAsked = true; navigator.storage.persist().catch(() => {});
+    }
+  }).catch(() => { autosave.ok = false; })
+    .finally(() => { autosave.writing = false; if (fileMenuOpen) updateFileStatus(); });
+}
+
+setInterval(() => saveNow(false), 1000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(true); });
+window.addEventListener('pagehide', () => saveNow(true));
+window.addEventListener('beforeunload', e => {
+  saveNow(true);
+  // Warn only if the board could not be stored
+  if (!autosave.ok && !boardIsEmpty()) { e.preventDefault(); e.returnValue = ''; }
+});
+
+idbGet().then(d => {
+  // If something was drawn while loading, keep it rather than overwrite it
+  if (isDoc(d) && docVer === 0) { applyDoc(d); autosave.savedAt = d.savedAt || 0; }
+  autosave.savedSig = docSignature();
+}).catch(() => { autosave.ok = false; })
+  .finally(() => { autosave.ready = true; });
+
+// ── Files ──
+function stampForName() {
+  const d = new Date(), z = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}`;
+}
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+function saveToFile() {
+  if (!CAN_DOWNLOAD) return;
+  // Two decimals are far below a pixel even at 50× zoom, and halve the file
+  const json = JSON.stringify(serializeDoc(), (k, v) =>
+    typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v);
+  downloadBlob(new Blob([json], { type: 'application/json' }), `lavagna-${stampForName()}${FILE_EXT}`);
+  closeFileMenu();
+}
+
+function openFromFile(file) {
+  if (!file) return;
+  const r = new FileReader();
+  r.onerror = () => showFileMessage('Impossibile leggere il file.');
+  r.onload = () => {
+    let d = null;
+    try { d = JSON.parse(r.result); } catch (e) {}
+    if (!isDoc(d)) { showFileMessage('Questo file non è una lavagna di Inkfinite.'); return; }
+    if (!boardIsEmpty() && !confirm('Aprire «' + file.name + '»? Le pagine aperte ora verranno sostituite.')) return;
+    applyDoc(d);
+    saveNow(true);
+    closeFileMenu();
+  };
+  r.readAsText(file);
+}
+
+function exportPagePng() {
+  if (!CAN_DOWNLOAD) return;
+  const t = tab(), b = getContentBounds(t);
+  if (!b) { showFileMessage('La pagina è vuota.'); return; }
+  const w = b.x1 - b.x0, h = b.y1 - b.y0;
+  // Twice the drawing scale for sharpness, capped at what canvases reliably allow
+  const s = Math.min(2, 8192 / w, 8192 / h, Math.sqrt(32e6 / (w * h)));
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(w * s); c.height = Math.ceil(h * s);
+  const realCtx = ctx; ctx = c.getContext('2d');
+  try {
+    ctx.fillStyle = t.bgColor; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.setTransform(s, 0, 0, s, -b.x0 * s, -b.y0 * s);
+    if (t.gridEnabled) {
+      ctx.save();
+      ctx.strokeStyle = luminance(t.bgColor) > 0.5 ? 'rgba(0,0,0,0.09)' : 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 1 / s;
+      ctx.beginPath();
+      for (let x = Math.ceil(b.x0 / GRID_SIZE) * GRID_SIZE; x <= b.x1; x += GRID_SIZE) { ctx.moveTo(x, b.y0); ctx.lineTo(x, b.y1); }
+      for (let y = Math.ceil(b.y0 / GRID_SIZE) * GRID_SIZE; y <= b.y1; y += GRID_SIZE) { ctx.moveTo(b.x0, y); ctx.lineTo(b.x1, y); }
+      ctx.stroke();
+      ctx.restore();
+    }
+    const all = [...t.highlighters, ...t.strokes, ...t.shapes].sort((a, b2) => (a.seq || 0) - (b2.seq || 0));
+    for (const it of all) { if (it === curStroke) continue; it.type ? renderShape(it) : drawStroke(it); }
+  } finally { ctx = realCtx; }
+  c.toBlob(blob => {
+    if (!blob) { showFileMessage('Pagina troppo grande per un\'immagine.'); return; }
+    downloadBlob(blob, `lavagna-pagina-${state.activeTabIndex + 1}-${stampForName()}.png`);
+    closeFileMenu();
+  }, 'image/png');
+}
+
+function newBoard() {
+  if (!boardIsEmpty()) {
+    const msg = CAN_DOWNLOAD
+      ? 'Cancellare tutte le pagine e ricominciare? Se ti servono, salvale prima su file.'
+      : 'Cancellare tutte le pagine e ricominciare? Non si può annullare.';
+    if (!confirm(msg)) return;
+  }
+  const bg = state.tabs[0].bgColor;
+  if (textEdit.active) cancelText();
+  cancelStroke(); cancelPolyShape(); clearSelection();
+  if (mmOpen) closeMinimap();
+  const t = makeTab(); t.bgColor = bg;
+  state.tabs = [t];
+  itemsChanged(null);
+  switchTab(0);
+  updateZoomLabel();
+  docVer++;
+  saveNow(true);
+  closeFileMenu();
+}
+
+// ── File menu ──
+const fileMenu  = document.getElementById('file-menu');
+const fileInput = document.getElementById('file-input');
+let fileMenuOpen = false, fileMessage = '';
+
+if (!CAN_DOWNLOAD) fileMenu.querySelectorAll('[data-needs-download]').forEach(el => el.remove());
+
+function updateFileStatus() {
+  const el = document.getElementById('file-status');
+  el.classList.toggle('fm-error', !!fileMessage || !autosave.ok);
+  if (fileMessage) { el.textContent = fileMessage; return; }
+  if (!autosave.ok) {
+    el.textContent = CAN_DOWNLOAD
+      ? 'Salvataggio automatico non disponibile in questo browser. Salva su file prima di chiudere.'
+      : 'Salvataggio automatico non disponibile.';
+    return;
+  }
+  if (!autosave.savedAt) { el.textContent = 'Le pagine si salvano da sole su questo dispositivo.'; return; }
+  const d = new Date(autosave.savedAt), now = new Date();
+  const hm = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+  const sameDay = d.toDateString() === now.toDateString();
+  el.textContent = 'Salvata su questo dispositivo ' +
+    (sameDay ? 'alle ' + hm : 'il ' + d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long' }) + ' alle ' + hm) + '.';
+}
+function showFileMessage(msg) {
+  fileMessage = msg;
+  if (!fileMenuOpen) openFileMenu(); else updateFileStatus();
+}
+
+function openFileMenu() {
+  saveNow(false);
+  const btn = document.getElementById('btn-file');
+  fileMenu.style.display = 'flex';
+  updateFileStatus();
+  const r = btn.getBoundingClientRect(), mw = fileMenu.offsetWidth, mh = fileMenu.offsetHeight;
+  const edge = canvasPanel.dataset.edge || 'bottom';
+  let left, top;
+  if (edge === 'bottom')     { left = r.left;          top = r.top - mh - 10; }
+  else if (edge === 'top')   { left = r.left;          top = r.bottom + 10; }
+  else if (edge === 'left')  { left = r.right + 10;    top = r.top; }
+  else                       { left = r.left - mw - 10; top = r.top; }
+  fileMenu.style.left = Math.max(8, Math.min(left, window.innerWidth - mw - 8)) + 'px';
+  fileMenu.style.top  = Math.max(8, Math.min(top, window.innerHeight - mh - 8)) + 'px';
+  fileMenuOpen = true;
+}
+function closeFileMenu() { fileMenu.style.display = 'none'; fileMenuOpen = false; fileMessage = ''; }
+
+document.getElementById('btn-file').addEventListener('click', e => {
+  e.stopPropagation();
+  fileMenuOpen ? closeFileMenu() : openFileMenu();
+});
+document.addEventListener('pointerdown', e => {
+  if (fileMenuOpen && !fileMenu.contains(e.target) && !e.target.closest('#btn-file')) closeFileMenu();
+});
+fileMenu.addEventListener('pointerdown', e => e.stopPropagation());
+document.getElementById('fm-save').addEventListener('click', saveToFile);
+document.getElementById('fm-png').addEventListener('click', exportPagePng);
+document.getElementById('fm-open').addEventListener('click', () => { fileMessage = ''; fileInput.click(); });
+document.getElementById('fm-new').addEventListener('click', newBoard);
+fileInput.addEventListener('change', () => { openFromFile(fileInput.files[0]); fileInput.value = ''; });
+
+// Ctrl+S / Ctrl+O, and dropping a .inkfinite file on the board
+document.addEventListener('keydown', e => {
+  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === 's') { e.preventDefault(); if (CAN_DOWNLOAD) saveToFile(); }
+  if (k === 'o') { e.preventDefault(); fileInput.click(); }
+});
+window.addEventListener('dragover', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
+window.addEventListener('drop', e => {
+  const f = e.dataTransfer && e.dataTransfer.files[0];
+  if (!f) return;
+  e.preventDefault();
+  openFromFile(f);
+});
+
 // ─── Init ────────────────────────────────────────────────────────────────────
 
 selectTool('pencil');
@@ -2638,5 +2963,4 @@ syncUndoUI();
 repositionPanels();
 updateZoomLabel();
 
-window.addEventListener('beforeunload', e => { e.preventDefault(); e.returnValue = ''; });
 
