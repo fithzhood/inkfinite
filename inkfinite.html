@@ -94,7 +94,10 @@
 
   <!-- Save / open menu -->
   <div id="file-menu" style="display:none">
-    <button class="fm-item" id="fm-save" data-needs-download>Salva su file<kbd>Ctrl+S</kbd></button>
+    <button class="fm-item" id="fm-save-all">Salva tutte le pagine<kbd>Ctrl+S</kbd></button>
+    <button class="fm-item" id="fm-save-page">Salva solo questa pagina</button>
+    <div class="fm-divider"></div>
+    <button class="fm-item" id="fm-save" data-needs-download>Salva su file<kbd>Ctrl+Shift+S</kbd></button>
     <button class="fm-item" id="fm-open">Apri file<kbd data-needs-download>Ctrl+O</kbd></button>
     <button class="fm-item" id="fm-png" data-needs-download>Esporta pagina come PNG</button>
     <div class="fm-divider"></div>
@@ -102,6 +105,7 @@
     <p id="file-status"></p>
     <p id="app-version"></p>
   </div>
+  <div id="save-hint" style="display:none"></div>
   <input type="file" id="file-input" accept=".inkfinite,application/json" hidden>
 
   <!-- Palette panel (default: right edge, attached next to toolbar) -->

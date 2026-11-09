@@ -20,7 +20,7 @@ const EDGE_ZONE      = 60;   // px from edge to start auto-scroll
 const EDGE_MAX_SPEED = 14;   // max scroll pixels/frame
 const TAP_HIT_R      = 14;   // touch hit radius (screen px)
 let   shapeIdSeq  = 0;
-let   docVer      = 0;   // bumped by every edit that goes through undo; the autosave watches it
+let   docVer      = 0;   // bumped by every edit that goes through undo; tells saved from unsaved
 
 const DARK_PALETTE  = ['#FFFFFF','#FF4444','#55BBFF','#88FF88','#FFEE44','#FF44FF'];
 const LIGHT_PALETTE = ['#111111','#CC0000','#0055AA','#228822','#AA8800','#990099'];
@@ -2631,9 +2631,9 @@ document.getElementById('btn-zoom-reset').addEventListener('click', () => {
 });
 
 // ─── Save / open ─────────────────────────────────────────────────────────────
-// Two layers:
-//  · autosave: the whole board (all pages) goes to IndexedDB a moment after every
-//    change, and comes back on the next launch. Works in the APK too.
+// Saving is manual and nothing happens on close:
+//  · "Salva": the board (all pages, or only the one on screen) goes into a single slot
+//    in IndexedDB, overwritten each time, and is reopened on the next launch.
 //  · files: "Salva su file" writes a .inkfinite (JSON) you can move between devices,
 //    "Apri file" reads one back, "Esporta pagina come PNG" makes an image of the page.
 // Undo history is not saved: it would double the size and only covers the session.
@@ -2642,16 +2642,17 @@ const FILE_EXT     = '.inkfinite';
 const APP_VERSION  = '__APP_VERSION__';
 const DOC_VERSION  = 1;
 const IS_NATIVE    = document.body.classList.contains('capacitor');
-// Android WebView ignores <a download>: in the APK only the autosave and "Apri file" work.
+// Android WebView ignores <a download>: in the APK there is no file saving or PNG export.
 const CAN_DOWNLOAD = !IS_NATIVE;
 
-function serializeDoc() {
+function serializeDoc(scope) {
+  const list = scope === 'page' ? [tab()] : state.tabs;
   return {
     app: 'inkfinite', version: DOC_VERSION, savedAt: Date.now(),
-    activeTabIndex: state.activeTabIndex,
+    activeTabIndex: scope === 'page' ? 0 : state.activeTabIndex,
     activeColor: state.activeColor, highlighterColor: state.highlighterColor,
     customColors: [...state.customColors],
-    tabs: state.tabs.map(t => ({
+    tabs: list.map(t => ({
       bgColor: t.bgColor, gridEnabled: t.gridEnabled,
       transform: { ...t.transform },
       toolWidths: { ...t.toolWidths }, toolWidthPx: { ...t.toolWidthPx },
@@ -2671,10 +2672,14 @@ function boardIsEmpty() {
   return state.tabs.every(t => !t.strokes.length && !t.highlighters.length && !t.shapes.length);
 }
 
-function applyDoc(d) {
+function resetInteraction() {
   if (textEdit.active) cancelText();
   cancelStroke(); cancelPolyShape(); clearSelection();
   if (mmOpen) closeMinimap();
+}
+
+function applyDoc(d) {
+  resetInteraction();
   const arr = v => Array.isArray(v) ? v : [];
   let maxS = 0, maxTx = 0;
   state.tabs = d.tabs.slice(0, MAX_TABS).map(src => {
@@ -2709,7 +2714,7 @@ function applyDoc(d) {
   docVer++;
 }
 
-// ── Autosave (IndexedDB) ──
+// ── Device slot (IndexedDB) ──
 const IDB_NAME = 'inkfinite', IDB_STORE = 'boards', IDB_KEY = 'current';
 let idbPromise = null;
 function idb() {
@@ -2736,59 +2741,75 @@ function idbPut(doc) {
   }));
 }
 
-const autosave = { ready: false, ok: true, savedSig: '', savedAt: 0, writing: false };
+const saved = { ready: false, ok: true, sig: '', at: 0, pages: 0 };
 
-// Cheap fingerprint of everything that is saved: compared every second, so it
-// must not walk the points.
-function docSignature() {
-  const p = [docVer, sceneVer, state.activeTabIndex, state.activeColor, state.highlighterColor, state.customColors.join()];
-  for (const t of state.tabs) {
-    const tr = t.transform;
-    p.push(t.bgColor, t.gridEnabled ? 1 : 0, tr.scale, Math.round(tr.tx), Math.round(tr.ty),
-           t.strokes.length, t.highlighters.length, t.shapes.length,
-           Object.values(t.toolWidthPx).join());
-  }
+// Fingerprint of the drawn content (not of zoom or scroll), cheap enough to
+// compare every second: it never walks the points.
+function contentSignature() {
+  const p = [docVer, sceneVer, state.tabs.length];
+  for (const t of state.tabs)
+    p.push(t.bgColor, t.gridEnabled ? 1 : 0, t.strokes.length, t.highlighters.length, t.shapes.length);
   return p.join('|');
 }
-
-// A gesture in progress keeps changing the board after its pushUndo(): wait for it to end.
-function boardBusy() {
-  return ptrs.size > 0 || !!curStroke || ss.drawing || eraserActive || !!lassoEraserPts || textEdit.active ||
-         ['dragging', 'resizing', 'rotating', 'vertex', 'lasso'].includes(sel.phase);
+function hasUnsaved() {
+  if (!saved.ready) return false;
+  if (!saved.at && boardIsEmpty()) return false;
+  return contentSignature() !== saved.sig;
 }
 
-function saveNow(force) {
-  if (!autosave.ready || !autosave.ok || autosave.writing) return;
-  if (!force && boardBusy()) return;
-  const sig = docSignature();
-  if (sig === autosave.savedSig) return;
-  autosave.writing = true;
-  let doc;
-  try { doc = serializeDoc(); } catch (e) { autosave.writing = false; return; }
+function timeLabel(ts) {
+  const d = new Date(ts), now = new Date();
+  const hm = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === now.toDateString()
+    ? 'alle ' + hm
+    : 'il ' + d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long' }) + ' alle ' + hm;
+}
+
+let hintTimer = 0;
+function showHint(text) {
+  const el = document.getElementById('save-hint');
+  el.textContent = text; el.style.display = 'block';
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => { el.style.display = 'none'; }, 1800);
+}
+
+function saveToDevice(scope) {
+  if (!saved.ready) return;
+  if (!saved.ok) { showFileMessage(unavailableText()); return; }
+  if (textEdit.active) confirmText();
+  const doc = serializeDoc(scope), sig = contentSignature();
   idbPut(doc).then(() => {
-    autosave.savedSig = sig; autosave.savedAt = doc.savedAt;
-    if (navigator.storage && navigator.storage.persist && !autosave.persistAsked) {
-      autosave.persistAsked = true; navigator.storage.persist().catch(() => {});
+    saved.sig = sig; saved.at = doc.savedAt; saved.pages = doc.tabs.length;
+    if (navigator.storage && navigator.storage.persist && !saved.persistAsked) {
+      saved.persistAsked = true; navigator.storage.persist().catch(() => {});
     }
-  }).catch(() => { autosave.ok = false; })
-    .finally(() => { autosave.writing = false; if (fileMenuOpen) updateFileStatus(); });
+    closeFileMenu();
+    refreshSaveUI();
+    showHint(scope === 'page' && state.tabs.length > 1
+      ? 'Pagina ' + (state.activeTabIndex + 1) + ' salvata'
+      : (doc.tabs.length > 1 ? 'Salvate ' + doc.tabs.length + ' pagine' : 'Lavagna salvata'));
+  }).catch(() => { saved.ok = false; showFileMessage(unavailableText()); });
 }
 
-setInterval(() => saveNow(false), 1000);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(true); });
-window.addEventListener('pagehide', () => saveNow(true));
-window.addEventListener('beforeunload', e => {
-  saveNow(true);
-  // Warn only if the board could not be stored
-  if (!autosave.ok && !boardIsEmpty()) { e.preventDefault(); e.returnValue = ''; }
-});
+function unavailableText() {
+  return CAN_DOWNLOAD
+    ? 'Il browser non permette di salvare sul dispositivo. Usa Salva su file.'
+    : 'Salvataggio sul dispositivo non riuscito.';
+}
 
+// The disk button carries a dot while there is something not saved yet
+function refreshSaveUI() {
+  document.getElementById('btn-file').classList.toggle('unsaved', hasUnsaved());
+  if (fileMenuOpen) updateFileStatus();
+}
+setInterval(refreshSaveUI, 1000);
+
+// Reopen what was saved last
 idbGet().then(d => {
   // If something was drawn while loading, keep it rather than overwrite it
-  if (isDoc(d) && docVer === 0) { applyDoc(d); autosave.savedAt = d.savedAt || 0; }
-  autosave.savedSig = docSignature();
-}).catch(() => { autosave.ok = false; })
-  .finally(() => { autosave.ready = true; });
+  if (isDoc(d) && docVer === 0) { applyDoc(d); saved.at = d.savedAt || 0; saved.pages = d.tabs.length; }
+}).catch(() => { saved.ok = false; })
+  .finally(() => { saved.sig = contentSignature(); saved.ready = true; });
 
 // ── Files ──
 function stampForName() {
@@ -2804,7 +2825,7 @@ function downloadBlob(blob, name) {
 function saveToFile() {
   if (!CAN_DOWNLOAD) return;
   // Two decimals are far below a pixel even at 50× zoom, and halve the file
-  const json = JSON.stringify(serializeDoc(), (k, v) =>
+  const json = JSON.stringify(serializeDoc('all'), (k, v) =>
     typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v);
   downloadBlob(new Blob([json], { type: 'application/json' }), `lavagna-${stampForName()}${FILE_EXT}`);
   closeFileMenu();
@@ -2820,7 +2841,6 @@ function openFromFile(file) {
     if (!isDoc(d)) { showFileMessage('Questo file non è una lavagna di Inkfinite.'); return; }
     if (!boardIsEmpty() && !confirm('Aprire «' + file.name + '»? Le pagine aperte ora verranno sostituite.')) return;
     applyDoc(d);
-    saveNow(true);
     closeFileMenu();
   };
   r.readAsText(file);
@@ -2861,22 +2881,19 @@ function exportPagePng() {
 
 function newBoard() {
   if (!boardIsEmpty()) {
-    const msg = CAN_DOWNLOAD
-      ? 'Cancellare tutte le pagine e ricominciare? Se ti servono, salvale prima su file.'
-      : 'Cancellare tutte le pagine e ricominciare? Non si può annullare.';
+    const msg = hasUnsaved()
+      ? 'Cancellare tutte le pagine? Le modifiche non salvate andranno perse.'
+      : 'Cancellare tutte le pagine? Quello che hai salvato resta sul dispositivo finché non salvi di nuovo.';
     if (!confirm(msg)) return;
   }
   const bg = state.tabs[0].bgColor;
-  if (textEdit.active) cancelText();
-  cancelStroke(); cancelPolyShape(); clearSelection();
-  if (mmOpen) closeMinimap();
+  resetInteraction();
   const t = makeTab(); t.bgColor = bg;
   state.tabs = [t];
   itemsChanged(null);
   switchTab(0);
   updateZoomLabel();
   docVer++;
-  saveNow(true);
   closeFileMenu();
 }
 
@@ -2891,20 +2908,15 @@ if (!CAN_DOWNLOAD) fileMenu.querySelectorAll('[data-needs-download]').forEach(el
 
 function updateFileStatus() {
   const el = document.getElementById('file-status');
-  el.classList.toggle('fm-error', !!fileMessage || !autosave.ok);
+  const unsaved = hasUnsaved();
+  el.classList.toggle('fm-error', !!fileMessage || !saved.ok || unsaved);
   if (fileMessage) { el.textContent = fileMessage; return; }
-  if (!autosave.ok) {
-    el.textContent = CAN_DOWNLOAD
-      ? 'Salvataggio automatico non disponibile in questo browser. Salva su file prima di chiudere.'
-      : 'Salvataggio automatico non disponibile.';
-    return;
-  }
-  if (!autosave.savedAt) { el.textContent = 'Le pagine si salvano da sole su questo dispositivo.'; return; }
-  const d = new Date(autosave.savedAt), now = new Date();
-  const hm = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-  const sameDay = d.toDateString() === now.toDateString();
-  el.textContent = 'Salvata su questo dispositivo ' +
-    (sameDay ? 'alle ' + hm : 'il ' + d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long' }) + ' alle ' + hm) + '.';
+  if (!saved.ok) { el.textContent = unavailableText(); return; }
+  const last = saved.at
+    ? (saved.pages > 1 ? 'Salvate ' + saved.pages + ' pagine ' : 'Salvata 1 pagina ') + timeLabel(saved.at) + '.'
+    : '';
+  if (unsaved) el.textContent = 'Modifiche non salvate.' + (last ? ' ' + last : '');
+  else el.textContent = last || 'Niente di salvato su questo dispositivo.';
 }
 function showFileMessage(msg) {
   fileMessage = msg;
@@ -2912,8 +2924,11 @@ function showFileMessage(msg) {
 }
 
 function openFileMenu() {
-  saveNow(false);
   const btn = document.getElementById('btn-file');
+  const multi = state.tabs.length > 1;
+  document.getElementById('fm-save-all').firstChild.textContent = multi ? 'Salva tutte le pagine' : 'Salva la lavagna';
+  document.getElementById('fm-save-page').style.display = multi ? '' : 'none';
+  if (multi) document.getElementById('fm-save-page').firstChild.textContent = 'Salva solo la pagina ' + (state.activeTabIndex + 1);
   fileMenu.style.display = 'flex';
   updateFileStatus();
   const r = btn.getBoundingClientRect(), mw = fileMenu.offsetWidth, mh = fileMenu.offsetHeight;
@@ -2937,18 +2952,21 @@ document.addEventListener('pointerdown', e => {
   if (fileMenuOpen && !fileMenu.contains(e.target) && !e.target.closest('#btn-file')) closeFileMenu();
 });
 fileMenu.addEventListener('pointerdown', e => e.stopPropagation());
+document.getElementById('fm-save-all').addEventListener('click', () => saveToDevice('all'));
+document.getElementById('fm-save-page').addEventListener('click', () => saveToDevice('page'));
 document.getElementById('fm-save').addEventListener('click', saveToFile);
 document.getElementById('fm-png').addEventListener('click', exportPagePng);
 document.getElementById('fm-open').addEventListener('click', () => { fileMessage = ''; fileInput.click(); });
 document.getElementById('fm-new').addEventListener('click', newBoard);
 fileInput.addEventListener('change', () => { openFromFile(fileInput.files[0]); fileInput.value = ''; });
 
-// Ctrl+S / Ctrl+O, and dropping a .inkfinite file on the board
+// Ctrl+S saves every page, Ctrl+Shift+S saves to a file, Ctrl+O opens one;
+// a .inkfinite file dropped on the board opens too
 document.addEventListener('keydown', e => {
-  if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
   const k = e.key.toLowerCase();
-  if (k === 's') { e.preventDefault(); if (CAN_DOWNLOAD) saveToFile(); }
-  if (k === 'o') { e.preventDefault(); fileInput.click(); }
+  if (k === 's') { e.preventDefault(); if (e.shiftKey) saveToFile(); else saveToDevice('all'); }
+  if (k === 'o' && !e.shiftKey) { e.preventDefault(); fileInput.click(); }
 });
 window.addEventListener('dragover', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
 window.addEventListener('drop', e => {
