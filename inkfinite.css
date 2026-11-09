@@ -414,3 +414,5 @@ html, body {
   padding: 7px 12px; font-size: 13px;
   pointer-events: none; user-select: none;
 }
+/* Panels stay hidden until the script has put them in place (no jump at startup) */
+body:not(.panels-ready) .panel { visibility: hidden; }

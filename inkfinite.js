@@ -1773,6 +1773,25 @@ function snapToZone(el) {
   const zone = pos < 1/3 ? 'start' : pos > 2/3 ? 'end' : 'center';
   applyZone(el, edge, zone);
   repositionPanels();
+  savePanelLayout();
+}
+
+// Where each panel sits is remembered between launches (a few bytes in localStorage)
+const PANEL_KEY = 'inkfinite-panels';
+function savePanelLayout() {
+  const layout = {};
+  ALL_PANELS.forEach(p => { if (p.dataset.edge && p.dataset.edge !== 'float') layout[p.id] = [p.dataset.edge, p.dataset.zone]; });
+  try { localStorage.setItem(PANEL_KEY, JSON.stringify(layout)); } catch (e) {}
+}
+function restorePanelLayout() {
+  let layout = null;
+  try { layout = JSON.parse(localStorage.getItem(PANEL_KEY) || 'null'); } catch (e) {}
+  if (!layout) return;
+  const EDGES = ['left', 'right', 'top', 'bottom'], ZONES = ['start', 'center', 'end'];
+  ALL_PANELS.forEach(p => {
+    const v = layout[p.id];
+    if (Array.isArray(v) && EDGES.includes(v[0]) && ZONES.includes(v[1])) applyZone(p, v[0], v[1]);
+  });
 }
 
 // Position every snapped panel: zone controls the along-edge axis,
@@ -1820,8 +1839,21 @@ function repositionPanels() {
         if (edge==='top')    { p.style.top   =off+'px'; off+=p.offsetHeight+GAP; }
       });
     });
+    document.body.classList.add('panels-ready');
   });
 }
+// Placement depends on the panels' measured sizes. In the APK the page can start
+// before the WebView has its final size, so measuring once at startup left the
+// panels piled up until the next drag: lay them out again whenever a panel or
+// the window changes size, and when the app comes back to the foreground.
+if (window.ResizeObserver) {
+  const ro = new ResizeObserver(() => repositionPanels());
+  ALL_PANELS.forEach(p => ro.observe(p));
+  ro.observe(document.documentElement);
+}
+window.addEventListener('load', repositionPanels);
+window.addEventListener('pageshow', repositionPanels);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') repositionPanels(); });
 
 // Generic drag – works on the panel itself, skipping interactive children
 function makeDraggable(panelEl) {
@@ -2982,6 +3014,7 @@ selectTool('pencil');
 renderPalette();
 syncTabUI();
 syncUndoUI();
+restorePanelLayout();
 repositionPanels();
 updateZoomLabel();
 
