@@ -22,6 +22,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history, to count the commits
+      - name: Write version
+        run: |
+          N=$(git rev-list --count HEAD)
+          V="Versione $N del $(TZ=Europe/Rome date +%-d/%-m/%Y)"
+          sed -i "s|__APP_VERSION__|$V|" inkfinite.js
+          # a new ?v= on every deploy, so the app does not keep old files in cache
+          sed -i -E "s/\?v=[0-9]+/?v=$N/g" inkfinite.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -2638,6 +2638,8 @@ document.getElementById('btn-zoom-reset').addEventListener('click', () => {
 //    "Apri file" reads one back, "Esporta pagina come PNG" makes an image of the page.
 // Undo history is not saved: it would double the size and only covers the session.
 const FILE_EXT     = '.inkfinite';
+// Filled in by the Pages workflow (commit count and date); stays as is when run locally
+const APP_VERSION  = '__APP_VERSION__';
 const DOC_VERSION  = 1;
 const IS_NATIVE    = document.body.classList.contains('capacitor');
 // Android WebView ignores <a download>: in the APK only the autosave and "Apri file" work.
@@ -2883,6 +2885,8 @@ const fileMenu  = document.getElementById('file-menu');
 const fileInput = document.getElementById('file-input');
 let fileMenuOpen = false, fileMessage = '';
 
+document.getElementById('app-version').textContent =
+  APP_VERSION.startsWith('__') ? 'Versione locale' : APP_VERSION;
 if (!CAN_DOWNLOAD) fileMenu.querySelectorAll('[data-needs-download]').forEach(el => el.remove());
 
 function updateFileStatus() {

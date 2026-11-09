@@ -398,3 +398,7 @@ html, body {
   padding: 6px 10px 4px;
 }
 #file-status.fm-error { color: #f0b070; }
+#app-version {
+  font-size: 10px; color: #555;
+  padding: 0 10px 2px;
+}
