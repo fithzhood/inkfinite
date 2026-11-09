@@ -20,7 +20,6 @@ const EDGE_ZONE      = 60;   // px from edge to start auto-scroll
 const EDGE_MAX_SPEED = 14;   // max scroll pixels/frame
 const TAP_HIT_R      = 14;   // touch hit radius (screen px)
 let   shapeIdSeq  = 0;
-let   docVer      = 0;   // bumped by every edit that goes through undo; tells saved from unsaved
 
 const DARK_PALETTE  = ['#FFFFFF','#FF4444','#55BBFF','#88FF88','#FFEE44','#FF44FF'];
 const LIGHT_PALETTE = ['#111111','#CC0000','#0055AA','#228822','#AA8800','#990099'];
@@ -1717,9 +1716,9 @@ function detachSelection(){
     shapes:swap(t.shapes,sel.items.shapes,deepCloneShape),
   };
 }
-function pushUndo(){docVer++;tab().undoStack.push(snap());tab().redoStack=[];syncUndoUI();}
-function undo(){const t=tab();if(!t.undoStack.length)return;docVer++;t.redoStack.push(snap());const s=t.undoStack.pop();t.strokes=s.strokes;t.highlighters=s.highlighters;t.shapes=s.shapes||[];state.dirty=true;syncUndoUI();}
-function redo(){const t=tab();if(!t.redoStack.length)return;docVer++;t.undoStack.push(snap());const s=t.redoStack.pop();t.strokes=s.strokes;t.highlighters=s.highlighters;t.shapes=s.shapes||[];state.dirty=true;syncUndoUI();}
+function pushUndo(){tab().undoStack.push(snap());tab().redoStack=[];syncUndoUI();}
+function undo(){const t=tab();if(!t.undoStack.length)return;t.redoStack.push(snap());const s=t.undoStack.pop();t.strokes=s.strokes;t.highlighters=s.highlighters;t.shapes=s.shapes||[];state.dirty=true;syncUndoUI();}
+function redo(){const t=tab();if(!t.redoStack.length)return;t.undoStack.push(snap());const s=t.redoStack.pop();t.strokes=s.strokes;t.highlighters=s.highlighters;t.shapes=s.shapes||[];state.dirty=true;syncUndoUI();}
 function syncUndoUI(){
   const canUndo=tab().undoStack.length?'1':'0.35';
   const canRedo=tab().redoStack.length?'1':'0.35';
@@ -2662,43 +2661,19 @@ document.getElementById('btn-zoom-reset').addEventListener('click', () => {
   applyZoom(1, canvas.width / 2, canvas.height / 2);
 });
 
-// ─── Save / open ─────────────────────────────────────────────────────────────
-// Saving is manual and nothing happens on close:
-//  · "Salva": the board (all pages, or only the one on screen) goes into a single slot
-//    in IndexedDB, overwritten each time, and is reopened on the next launch.
-//  · files: "Salva su file" writes a .inkfinite (JSON) you can move between devices,
-//    "Apri file" reads one back, "Esporta pagina come PNG" makes an image of the page.
-// Undo history is not saved: it would double the size and only covers the session.
-const FILE_EXT     = '.inkfinite';
+// ─── Export ──────────────────────────────────────────────────────────────────
+// Nothing is kept between sessions: the board always opens empty. Saving means
+// exporting: a PDF (one PDF page per board page) or a PNG of the page on screen.
+// In a browser the file is downloaded; in the APK it is written to Documents/Inkfinite
+// through the Filesystem plugin, because Android WebView ignores <a download>.
 // Filled in by the Pages workflow (commit count and date); stays as is when run locally
 const APP_VERSION  = '__APP_VERSION__';
-const DOC_VERSION  = 1;
 const IS_NATIVE    = document.body.classList.contains('capacitor');
-// Android WebView ignores <a download>: in the APK there is no file saving or PNG export.
-const CAN_DOWNLOAD = !IS_NATIVE;
+const NATIVE_FS    = IS_NATIVE && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem;
+const EXPORT_DIR   = 'Inkfinite';
 
-function serializeDoc(scope) {
-  const list = scope === 'page' ? [tab()] : state.tabs;
-  return {
-    app: 'inkfinite', version: DOC_VERSION, savedAt: Date.now(),
-    activeTabIndex: scope === 'page' ? 0 : state.activeTabIndex,
-    activeColor: state.activeColor, highlighterColor: state.highlighterColor,
-    customColors: [...state.customColors],
-    tabs: list.map(t => ({
-      bgColor: t.bgColor, gridEnabled: t.gridEnabled,
-      transform: { ...t.transform },
-      toolWidths: { ...t.toolWidths }, toolWidthPx: { ...t.toolWidthPx },
-      seq: t.seq,
-      strokes: t.strokes.filter(s => s !== curStroke),
-      highlighters: t.highlighters.filter(s => s !== curStroke),
-      shapes: t.shapes,
-    })),
-  };
-}
-
-function isDoc(d) {
-  return d && d.app === 'inkfinite' && Array.isArray(d.tabs) && d.tabs.length > 0;
-}
+// Earlier versions kept the board in IndexedDB: remove what is left of it
+try { if (window.indexedDB) indexedDB.deleteDatabase('inkfinite'); } catch (e) {}
 
 function boardIsEmpty() {
   return state.tabs.every(t => !t.strokes.length && !t.highlighters.length && !t.shapes.length);
@@ -2710,180 +2685,12 @@ function resetInteraction() {
   if (mmOpen) closeMinimap();
 }
 
-function applyDoc(d) {
-  resetInteraction();
-  const arr = v => Array.isArray(v) ? v : [];
-  let maxS = 0, maxTx = 0;
-  state.tabs = d.tabs.slice(0, MAX_TABS).map(src => {
-    const t = makeTab();
-    if (typeof src.bgColor === 'string') t.bgColor = src.bgColor;
-    t.gridEnabled  = !!src.gridEnabled;
-    t.strokes      = arr(src.strokes).filter(s => s && Array.isArray(s.points));
-    t.highlighters = arr(src.highlighters).filter(s => s && Array.isArray(s.points));
-    t.shapes       = arr(src.shapes).filter(s => s && s.type);
-    Object.assign(t.transform,   src.transform   || {});
-    Object.assign(t.toolWidths,  src.toolWidths  || {});
-    Object.assign(t.toolWidthPx, src.toolWidthPx || {});
-    let seq = src.seq || 0;
-    for (const it of [...t.strokes, ...t.highlighters, ...t.shapes]) if ((it.seq || 0) > seq) seq = it.seq;
-    t.seq = seq;
-    // New shapes must not reuse ids from the loaded ones
-    for (const sh of t.shapes) {
-      const m = /^(s|tx)(\d+)$/.exec(sh.id || '');
-      if (m) { const n = +m[2]; if (m[1] === 's') maxS = Math.max(maxS, n); else maxTx = Math.max(maxTx, n); }
-    }
-    return t;
-  });
-  shapeIdSeq = Math.max(shapeIdSeq, maxS);
-  shapeIdSeqText = Math.max(shapeIdSeqText, maxTx);
-  if (typeof d.activeColor === 'string') state.activeColor = d.activeColor;
-  if (typeof d.highlighterColor === 'string') state.highlighterColor = d.highlighterColor;
-  if (Array.isArray(d.customColors)) state.customColors = d.customColors.slice(-MAX_CUSTOM);
-  itemsChanged(null);
-  switchTab(Math.min(Math.max(d.activeTabIndex | 0, 0), state.tabs.length - 1));
-  selectTool(state.activeTool);
-  updateZoomLabel();
-  docVer++;
-}
-
-// ── Device slot (IndexedDB) ──
-const IDB_NAME = 'inkfinite', IDB_STORE = 'boards', IDB_KEY = 'current';
-let idbPromise = null;
-function idb() {
-  if (!idbPromise) idbPromise = new Promise((res, rej) => {
-    if (!window.indexedDB) { rej(new Error('no-idb')); return; }
-    const rq = indexedDB.open(IDB_NAME, 1);
-    rq.onupgradeneeded = () => rq.result.createObjectStore(IDB_STORE);
-    rq.onsuccess = () => res(rq.result);
-    rq.onerror = () => rej(rq.error);
-  });
-  return idbPromise;
-}
-function idbGet() {
-  return idb().then(db => new Promise((res, rej) => {
-    const rq = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(IDB_KEY);
-    rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error);
-  }));
-}
-function idbPut(doc) {
-  return idb().then(db => new Promise((res, rej) => {
-    const tx = db.transaction(IDB_STORE, 'readwrite');
-    tx.objectStore(IDB_STORE).put(doc, IDB_KEY); // the doc is cloned here, synchronously
-    tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error);
-  }));
-}
-
-const saved = { ready: false, ok: true, sig: '', at: 0, pages: 0 };
-
-// Fingerprint of the drawn content (not of zoom or scroll), cheap enough to
-// compare every second: it never walks the points.
-function contentSignature() {
-  const p = [docVer, sceneVer, state.tabs.length];
-  for (const t of state.tabs)
-    p.push(t.bgColor, t.gridEnabled ? 1 : 0, t.strokes.length, t.highlighters.length, t.shapes.length);
-  return p.join('|');
-}
-function hasUnsaved() {
-  if (!saved.ready) return false;
-  if (!saved.at && boardIsEmpty()) return false;
-  return contentSignature() !== saved.sig;
-}
-
-function timeLabel(ts) {
-  const d = new Date(ts), now = new Date();
-  const hm = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
-  return d.toDateString() === now.toDateString()
-    ? 'alle ' + hm
-    : 'il ' + d.toLocaleDateString('it-IT', { day: 'numeric', month: 'long' }) + ' alle ' + hm;
-}
-
-let hintTimer = 0;
-function showHint(text) {
-  const el = document.getElementById('save-hint');
-  el.textContent = text; el.style.display = 'block';
-  clearTimeout(hintTimer);
-  hintTimer = setTimeout(() => { el.style.display = 'none'; }, 1800);
-}
-
-function saveToDevice(scope) {
-  if (!saved.ready) return;
-  if (!saved.ok) { showFileMessage(unavailableText()); return; }
-  if (textEdit.active) confirmText();
-  const doc = serializeDoc(scope), sig = contentSignature();
-  idbPut(doc).then(() => {
-    saved.sig = sig; saved.at = doc.savedAt; saved.pages = doc.tabs.length;
-    if (navigator.storage && navigator.storage.persist && !saved.persistAsked) {
-      saved.persistAsked = true; navigator.storage.persist().catch(() => {});
-    }
-    closeFileMenu();
-    refreshSaveUI();
-    showHint(scope === 'page' && state.tabs.length > 1
-      ? 'Pagina ' + (state.activeTabIndex + 1) + ' salvata'
-      : (doc.tabs.length > 1 ? 'Salvate ' + doc.tabs.length + ' pagine' : 'Lavagna salvata'));
-  }).catch(() => { saved.ok = false; showFileMessage(unavailableText()); });
-}
-
-function unavailableText() {
-  return CAN_DOWNLOAD
-    ? 'Il browser non permette di salvare sul dispositivo. Usa Salva su file.'
-    : 'Salvataggio sul dispositivo non riuscito.';
-}
-
-// The disk button carries a dot while there is something not saved yet
-function refreshSaveUI() {
-  document.getElementById('btn-file').classList.toggle('unsaved', hasUnsaved());
-  if (fileMenuOpen) updateFileStatus();
-}
-setInterval(refreshSaveUI, 1000);
-
-// Reopen what was saved last
-idbGet().then(d => {
-  // If something was drawn while loading, keep it rather than overwrite it
-  if (isDoc(d) && docVer === 0) { applyDoc(d); saved.at = d.savedAt || 0; saved.pages = d.tabs.length; }
-}).catch(() => { saved.ok = false; })
-  .finally(() => { saved.sig = contentSignature(); saved.ready = true; });
-
-// ── Files ──
-function stampForName() {
-  const d = new Date(), z = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}`;
-}
-function downloadBlob(blob, name) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = name;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-}
-function saveToFile() {
-  if (!CAN_DOWNLOAD) return;
-  // Two decimals are far below a pixel even at 50× zoom, and halve the file
-  const json = JSON.stringify(serializeDoc('all'), (k, v) =>
-    typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 100) / 100 : v);
-  downloadBlob(new Blob([json], { type: 'application/json' }), `lavagna-${stampForName()}${FILE_EXT}`);
-  closeFileMenu();
-}
-
-function openFromFile(file) {
-  if (!file) return;
-  const r = new FileReader();
-  r.onerror = () => showFileMessage('Impossibile leggere il file.');
-  r.onload = () => {
-    let d = null;
-    try { d = JSON.parse(r.result); } catch (e) {}
-    if (!isDoc(d)) { showFileMessage('Questo file non è una lavagna di Inkfinite.'); return; }
-    if (!boardIsEmpty() && !confirm('Aprire «' + file.name + '»? Le pagine aperte ora verranno sostituite.')) return;
-    applyDoc(d);
-    closeFileMenu();
-  };
-  r.readAsText(file);
-}
-
-function exportPagePng() {
-  if (!CAN_DOWNLOAD) return;
-  const t = tab(), b = getContentBounds(t);
-  if (!b) { showFileMessage('La pagina è vuota.'); return; }
+// Draws a page's content, cropped to it, at twice the drawing scale (capped at what
+// canvases reliably allow). Returns null for an empty page.
+function renderPageCanvas(t) {
+  const b = getContentBounds(t);
+  if (!b) return null;
   const w = b.x1 - b.x0, h = b.y1 - b.y0;
-  // Twice the drawing scale for sharpness, capped at what canvases reliably allow
   const s = Math.min(2, 8192 / w, 8192 / h, Math.sqrt(32e6 / (w * h)));
   const c = document.createElement('canvas');
   c.width = Math.ceil(w * s); c.height = Math.ceil(h * s);
@@ -2904,20 +2711,101 @@ function exportPagePng() {
     const all = [...t.highlighters, ...t.strokes, ...t.shapes].sort((a, b2) => (a.seq || 0) - (b2.seq || 0));
     for (const it of all) { if (it === curStroke) continue; it.type ? renderShape(it) : drawStroke(it); }
   } finally { ctx = realCtx; }
-  c.toBlob(blob => {
-    if (!blob) { showFileMessage('Pagina troppo grande per un\'immagine.'); return; }
-    downloadBlob(blob, `lavagna-pagina-${state.activeTabIndex + 1}-${stampForName()}.png`);
+  return c;
+}
+
+const canvasBlob = (c, type, q) => new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('toBlob')), type, q));
+
+// Minimal PDF writer: one JPEG per page, each page sized to its image with the
+// long side on A4's long side (842 pt). No library, so it works offline.
+async function buildPdf(canvases) {
+  const enc = new TextEncoder();
+  const parts = [], offsets = [];
+  let len = 0;
+  const add = x => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); len += b.length; };
+  const n = canvases.length;
+  add('%PDF-1.4\n%âãÏÓ\n');
+  offsets[1] = len; add('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  const kids = canvases.map((_, i) => `${3 + i * 3} 0 R`).join(' ');
+  offsets[2] = len; add(`2 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${n} >>\nendobj\n`);
+  for (let i = 0; i < n; i++) {
+    const c = canvases[i];
+    const jpg = new Uint8Array(await (await canvasBlob(c, 'image/jpeg', 0.92)).arrayBuffer());
+    const k = 842 / Math.max(c.width, c.height);
+    const W = +(c.width * k).toFixed(2), H = +(c.height * k).toFixed(2);
+    const pageId = 3 + i * 3, contId = pageId + 1, imgId = pageId + 2;
+    const content = `q ${W} 0 0 ${H} 0 0 cm /Im0 Do Q`;
+    offsets[pageId] = len;
+    add(`${pageId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] ` +
+        `/Resources << /XObject << /Im0 ${imgId} 0 R >> >> /Contents ${contId} 0 R >>\nendobj\n`);
+    offsets[contId] = len;
+    add(`${contId} 0 obj\n<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`);
+    offsets[imgId] = len;
+    add(`${imgId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${c.width} /Height ${c.height} ` +
+        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`);
+    add(jpg);
+    add('\nendstream\nendobj\n');
+  }
+  const count = 2 + n * 3;
+  const xref = len;
+  let x = `xref\n0 ${count + 1}\n0000000000 65535 f \n`;
+  for (let id = 1; id <= count; id++) x += String(offsets[id]).padStart(10, '0') + ' 00000 n \n';
+  add(x + `trailer\n<< /Size ${count + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(parts, { type: 'application/pdf' });
+}
+
+function stampForName() {
+  const d = new Date(), z = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}`;
+}
+function blobToBase64(blob) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1]);
+    r.onerror = () => rej(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+// Returns where the file went, for the confirmation line
+async function deliverFile(blob, name) {
+  if (IS_NATIVE) {
+    if (!NATIVE_FS) throw new Error('no-fs');
+    await NATIVE_FS.writeFile({ path: EXPORT_DIR + '/' + name, data: await blobToBase64(blob), directory: 'DOCUMENTS', recursive: true });
+    return 'Salvato in Documenti/' + EXPORT_DIR;
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  return 'Scaricato';
+}
+
+let exporting = false;
+async function exportBoard(kind) {
+  if (exporting) return;
+  if (textEdit.active) confirmText();
+  const single = kind !== 'pdf-all';
+  const pages = single ? [tab()] : state.tabs;
+  const canvases = pages.map(renderPageCanvas).filter(Boolean);
+  if (!canvases.length) { showFileMessage(single ? 'La pagina è vuota.' : 'La lavagna è vuota.'); return; }
+  exporting = true;
+  setFileStatus('Esportazione in corso…');
+  try {
+    const base = 'lavagna-' + stampForName() + (single && state.tabs.length > 1 ? '-pagina-' + (state.activeTabIndex + 1) : '');
+    const blob = kind === 'png' ? await canvasBlob(canvases[0], 'image/png') : await buildPdf(canvases);
+    const name = base + (kind === 'png' ? '.png' : '.pdf');
+    const where = await deliverFile(blob, name);
     closeFileMenu();
-  }, 'image/png');
+    showHint(where + ': ' + name);
+  } catch (e) {
+    showFileMessage(e && e.message === 'no-fs'
+      ? 'Per esportare dall\'app serve l\'APK aggiornato.'
+      : 'Esportazione non riuscita.');
+  } finally { exporting = false; }
 }
 
 function newBoard() {
-  if (!boardIsEmpty()) {
-    const msg = hasUnsaved()
-      ? 'Cancellare tutte le pagine? Le modifiche non salvate andranno perse.'
-      : 'Cancellare tutte le pagine? Quello che hai salvato resta sul dispositivo finché non salvi di nuovo.';
-    if (!confirm(msg)) return;
-  }
+  if (!boardIsEmpty() && !confirm('Cancellare tutte le pagine?')) return;
   const bg = state.tabs[0].bgColor;
   resetInteraction();
   const t = makeTab(); t.bgColor = bg;
@@ -2925,44 +2813,50 @@ function newBoard() {
   itemsChanged(null);
   switchTab(0);
   updateZoomLabel();
-  docVer++;
   closeFileMenu();
 }
 
-// ── File menu ──
-const fileMenu  = document.getElementById('file-menu');
-const fileInput = document.getElementById('file-input');
-let fileMenuOpen = false, fileMessage = '';
+let hintTimer = 0;
+function showHint(text) {
+  const el = document.getElementById('save-hint');
+  el.textContent = text; el.style.display = 'block';
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => { el.style.display = 'none'; }, 2500);
+}
+
+// ── Export menu ──
+const fileMenu = document.getElementById('file-menu');
+let fileMenuOpen = false;
 
 document.getElementById('app-version').textContent =
   APP_VERSION.startsWith('__') ? 'Versione locale' : APP_VERSION;
-if (!CAN_DOWNLOAD) fileMenu.querySelectorAll('[data-needs-download]').forEach(el => el.remove());
 
-function updateFileStatus() {
+function setFileStatus(text, isError) {
   const el = document.getElementById('file-status');
-  const unsaved = hasUnsaved();
-  el.classList.toggle('fm-error', !!fileMessage || !saved.ok || unsaved);
-  if (fileMessage) { el.textContent = fileMessage; return; }
-  if (!saved.ok) { el.textContent = unavailableText(); return; }
-  const last = saved.at
-    ? (saved.pages > 1 ? 'Salvate ' + saved.pages + ' pagine ' : 'Salvata 1 pagina ') + timeLabel(saved.at) + '.'
-    : '';
-  if (unsaved) el.textContent = 'Modifiche non salvate.' + (last ? ' ' + last : '');
-  else el.textContent = last || 'Niente di salvato su questo dispositivo.';
+  el.textContent = text;
+  el.classList.toggle('fm-error', !!isError);
+}
+function defaultFileStatus() {
+  setFileStatus(IS_NATIVE
+    ? 'I file vanno in Documenti/' + EXPORT_DIR + '. La lavagna non resta salvata nell\'app.'
+    : 'La lavagna non resta salvata: alla prossima apertura sarà vuota.');
 }
 function showFileMessage(msg) {
-  fileMessage = msg;
-  if (!fileMenuOpen) openFileMenu(); else updateFileStatus();
+  if (!fileMenuOpen) openFileMenu();
+  setFileStatus(msg, true);
 }
 
 function openFileMenu() {
   const btn = document.getElementById('btn-file');
   const multi = state.tabs.length > 1;
-  document.getElementById('fm-save-all').firstChild.textContent = multi ? 'Salva tutte le pagine' : 'Salva la lavagna';
-  document.getElementById('fm-save-page').style.display = multi ? '' : 'none';
-  if (multi) document.getElementById('fm-save-page').firstChild.textContent = 'Salva solo la pagina ' + (state.activeTabIndex + 1);
+  document.getElementById('fm-pdf-all').firstChild.textContent = multi ? 'Esporta tutte le pagine in PDF' : 'Esporta in PDF';
+  document.getElementById('fm-pdf-page').style.display = multi ? '' : 'none';
+  if (multi) document.getElementById('fm-pdf-page').firstChild.textContent = 'Esporta solo la pagina ' + (state.activeTabIndex + 1) + ' in PDF';
+  document.getElementById('fm-png').firstChild.textContent = multi
+    ? 'Esporta la pagina ' + (state.activeTabIndex + 1) + ' come immagine PNG'
+    : 'Esporta come immagine PNG';
   fileMenu.style.display = 'flex';
-  updateFileStatus();
+  defaultFileStatus();
   const r = btn.getBoundingClientRect(), mw = fileMenu.offsetWidth, mh = fileMenu.offsetHeight;
   const edge = canvasPanel.dataset.edge || 'bottom';
   let left, top;
@@ -2974,7 +2868,7 @@ function openFileMenu() {
   fileMenu.style.top  = Math.max(8, Math.min(top, window.innerHeight - mh - 8)) + 'px';
   fileMenuOpen = true;
 }
-function closeFileMenu() { fileMenu.style.display = 'none'; fileMenuOpen = false; fileMessage = ''; }
+function closeFileMenu() { fileMenu.style.display = 'none'; fileMenuOpen = false; }
 
 document.getElementById('btn-file').addEventListener('click', e => {
   e.stopPropagation();
@@ -2984,28 +2878,15 @@ document.addEventListener('pointerdown', e => {
   if (fileMenuOpen && !fileMenu.contains(e.target) && !e.target.closest('#btn-file')) closeFileMenu();
 });
 fileMenu.addEventListener('pointerdown', e => e.stopPropagation());
-document.getElementById('fm-save-all').addEventListener('click', () => saveToDevice('all'));
-document.getElementById('fm-save-page').addEventListener('click', () => saveToDevice('page'));
-document.getElementById('fm-save').addEventListener('click', saveToFile);
-document.getElementById('fm-png').addEventListener('click', exportPagePng);
-document.getElementById('fm-open').addEventListener('click', () => { fileMessage = ''; fileInput.click(); });
+document.getElementById('fm-pdf-all').addEventListener('click', () => exportBoard('pdf-all'));
+document.getElementById('fm-pdf-page').addEventListener('click', () => exportBoard('pdf-page'));
+document.getElementById('fm-png').addEventListener('click', () => exportBoard('png'));
 document.getElementById('fm-new').addEventListener('click', newBoard);
-fileInput.addEventListener('change', () => { openFromFile(fileInput.files[0]); fileInput.value = ''; });
 
-// Ctrl+S saves every page, Ctrl+Shift+S saves to a file, Ctrl+O opens one;
-// a .inkfinite file dropped on the board opens too
+// Ctrl+S exports every page as PDF
 document.addEventListener('keydown', e => {
-  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
-  const k = e.key.toLowerCase();
-  if (k === 's') { e.preventDefault(); if (e.shiftKey) saveToFile(); else saveToDevice('all'); }
-  if (k === 'o' && !e.shiftKey) { e.preventDefault(); fileInput.click(); }
-});
-window.addEventListener('dragover', e => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
-window.addEventListener('drop', e => {
-  const f = e.dataTransfer && e.dataTransfer.files[0];
-  if (!f) return;
-  e.preventDefault();
-  openFromFile(f);
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+  if (e.key.toLowerCase() === 's') { e.preventDefault(); exportBoard('pdf-all'); }
 });
 
 // ─── Init ────────────────────────────────────────────────────────────────────
