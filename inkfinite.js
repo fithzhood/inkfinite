@@ -2798,9 +2798,12 @@ async function exportBoard(kind) {
     closeFileMenu();
     showHint(where + ': ' + name);
   } catch (e) {
-    showFileMessage(e && e.message === 'no-fs'
+    const msg = String(e && e.message || '');
+    showFileMessage(msg === 'no-fs'
       ? 'Per esportare dall\'app serve l\'APK aggiornato.'
-      : 'Esportazione non riuscita.');
+      : /permission/i.test(msg)
+        ? 'Senza il permesso di accesso ai file non posso salvare in Documenti. Riprova e tocca Consenti.'
+        : 'Esportazione non riuscita.');
   } finally { exporting = false; }
 }
 
